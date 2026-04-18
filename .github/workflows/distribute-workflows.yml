@@ -1,0 +1,113 @@
+# このリポジトリに置いた workflows/ 以下の .yml を、同一オーナー配下の全リポジトリへ配布する
+name: Distribute workflows
+
+on:
+  schedule:
+    # 毎週月曜 00:00 UTC = 月曜 09:00 JST
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: distribute-workflows
+  cancel-in-progress: false
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 全リポジトリへワークフローを配布
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::secrets.PAT_TOKEN が未設定です。リポジトリの Secrets に PAT_TOKEN を登録してください。"
+            exit 1
+          fi
+
+          # 認証ユーザー（個人アカウントのログイン名）
+          owner="$(gh api user --jq .login)"
+          echo "配布先オーナー: ${owner}"
+
+          # 同一オーナー配下のリポジトリ名一覧（アーカイブは除外）
+          mapfile -t repos < <(
+            gh repo list "${owner}" \
+              --limit 1000 \
+              --json name,isArchived \
+              --jq -r '.[] | select(.isArchived | not) | .name'
+          )
+
+          if [[ "${#repos[@]}" -eq 0 ]]; then
+            echo "::warning::対象リポジトリがありませんでした。"
+            exit 0
+          fi
+
+          shopt -s nullglob
+          workflow_files=(workflows/*.yml)
+          shopt -u nullglob
+
+          if [[ "${#workflow_files[@]}" -eq 0 ]]; then
+            echo "::error::workflows/*.yml が見つかりません。このリポジトリの workflows/ に .yml を追加してください。"
+            exit 1
+          fi
+
+          for repo in "${repos[@]}"; do
+            for workflow_file in "${workflow_files[@]}"; do
+              filename="$(basename "${workflow_file}")"
+              api_url="https://api.github.com/repos/${owner}/${repo}/contents/.github/workflows/${filename}"
+
+              # 既にファイルがあるか確認（200 ならスキップ）
+              status="$(
+                curl -sS -o /dev/null -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "${api_url}"
+              )"
+
+              if [[ "${status}" == "200" ]]; then
+                echo "[SKIP] ${owner}/${repo} — ${filename} は既に存在します"
+                continue
+              fi
+
+              if [[ "${status}" != "404" ]]; then
+                echo "::warning::[HTTP ${status}] ${owner}/${repo} / ${filename} の存在確認に失敗したためスキップします"
+                continue
+              fi
+
+              echo "[ADD] ${owner}/${repo} へ ${filename} を追加します"
+
+              content_b64="$(base64 -w 0 "${workflow_file}")"
+              body="$(
+                jq -n \
+                  --arg msg "chore: add ${filename} (distributed from security-automation)" \
+                  --arg c "${content_b64}" \
+                  '{message: $msg, content: $c}'
+              )"
+
+              http_code="$(
+                curl -sS -o /tmp/distribute_response.json -w '%{http_code}' \
+                  -X PUT \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "${api_url}" \
+                  -d "${body}"
+              )"
+
+              if [[ "${http_code}" == "201" ]]; then
+                echo "[OK] ${owner}/${repo} / ${filename}"
+              else
+                echo "::warning::[HTTP ${http_code}] ${owner}/${repo} / ${filename} の追加に失敗しました"
+                if [[ -s /tmp/distribute_response.json ]]; then
+                  cat /tmp/distribute_response.json
+                fi
+              fi
+            done
+          done
