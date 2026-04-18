@@ -15,6 +15,9 @@ jobs:
   distribute:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # GITHUB_TOKEN は checkout の読み取りのみ。他リポへの書き込みは PAT_TOKEN（env の GH_TOKEN）を使用
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,8 +108,10 @@ jobs:
                 echo "[OK] ${owner}/${repo} / ${filename}"
               else
                 echo "::warning::[HTTP ${http_code}] ${owner}/${repo} / ${filename} の追加に失敗しました"
+                # API レスポンス全文はログに出さず、メッセージのみ（機密混入リスク低減）
                 if [[ -s /tmp/distribute_response.json ]]; then
-                  cat /tmp/distribute_response.json
+                  jq -r '.message // "（詳細なし）"' /tmp/distribute_response.json 2>/dev/null \
+                    || echo "(エラー本文の解析に失敗)"
                 fi
               fi
             done

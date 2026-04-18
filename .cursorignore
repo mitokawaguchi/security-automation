@@ -1,0 +1,8 @@
+﻿# .gitignore と整合（Cursor のインデックス対象を絞る）
+.env
+.env.*
+node_modules/
+dist/
+build/
+coverage/
+*.log

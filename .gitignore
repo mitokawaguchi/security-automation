@@ -1,0 +1,37 @@
+# 環境変数・ローカル設定（PAT を誤って置かない）
+.env
+.env.*
+!.env.example
+
+# 鍵・トークンっぽいファイルの誤コミット防止
+*.pem
+*.key
+*.p12
+*.pfx
+*_token.txt
+.secrets/
+
+# ログ・一時
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# エディタ・IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# ツール生成物（将来 package を足したとき用）
+node_modules/
+dist/
+build/
+coverage/
+.nyc_output/
