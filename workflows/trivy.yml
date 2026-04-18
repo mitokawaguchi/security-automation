@@ -1,0 +1,27 @@
+# 配布先リポジトリで実行: ファイルシステムを Trivy でスキャン（CRITICAL / HIGH）
+name: Trivy filesystem scan
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    name: Trivy FS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy（fs / CRITICAL,HIGH / table）
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          format: table
