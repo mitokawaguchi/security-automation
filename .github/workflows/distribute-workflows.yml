@@ -22,7 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 全リポジトリへワークフローを配布
+      - name: Secret scanning 有効化のうえ全リポジトリへワークフローを配布
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         shell: bash
@@ -50,6 +50,57 @@ jobs:
             echo "::warning::対象リポジトリがありませんでした。"
             exit 0
           fi
+
+          # --- Secret scanning / Push protection（無料プラン非対応等で失敗してもジョブは止めない） ---
+          set +e
+          patch_body="$(
+            jq -n '{"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}'
+          )"
+          for repo in "${repos[@]}"; do
+            repo_api="https://api.github.com/repos/${owner}/${repo}"
+            get_code="$(
+              curl -sS -o /tmp/gh_repo_get.json -w '%{http_code}' \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "${repo_api}" 2>/dev/null
+            )" || true
+            [[ -z "${get_code}" ]] && get_code="000"
+
+            if [[ "${get_code}" == "200" ]]; then
+              already="$(
+                jq -r '((.security_and_analysis.secret_scanning.status // "") == "enabled") and ((.security_and_analysis.secret_scanning_push_protection.status // "") == "enabled")' \
+                  /tmp/gh_repo_get.json 2>/dev/null || echo "false"
+              )"
+              if [[ "${already}" == "true" ]]; then
+                echo "[SECRET SCAN SKIP] ${owner}/${repo} — 既に有効です"
+                continue
+              fi
+            else
+              echo "::notice::[SECRET SCAN] ${owner}/${repo} の状態取得に失敗 (HTTP ${get_code})。有効化を試みます"
+            fi
+
+            patch_code="$(
+              curl -sS -o /tmp/gh_repo_patch.json -w '%{http_code}' \
+                -X PATCH \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                -d "${patch_body}" \
+                "${repo_api}" 2>/dev/null
+            )" || true
+            [[ -z "${patch_code}" ]] && patch_code="000"
+
+            if [[ "${patch_code}" == "200" ]]; then
+              echo "[SECRET SCAN OK] ${owner}/${repo}"
+            else
+              echo "::notice::[SECRET SCAN] ${owner}/${repo} の有効化をスキップ (HTTP ${patch_code})"
+              if [[ -s /tmp/gh_repo_patch.json ]]; then
+                jq -r '.message // "（詳細なし）"' /tmp/gh_repo_patch.json 2>/dev/null || true
+              fi
+            fi
+          done
+          set -euo pipefail
 
           shopt -s nullglob
           workflow_files=(workflows/*.yml)
