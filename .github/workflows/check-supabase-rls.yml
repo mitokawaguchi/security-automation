@@ -1,0 +1,132 @@
+name: Check Supabase RLS
+
+on:
+  schedule:
+    # 毎週月曜 00:00 UTC（JST 09:00）
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      ISSUE_TITLE: '[Security] RLS未設定のテーブルがあります'
+      ISSUE_LABEL: security-auto-fix
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
+            echo "::error::secrets.SUPABASE_DB_URL が未設定です。"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.PAT_TOKEN }}" ]]; then
+            echo "::error::secrets.PAT_TOKEN が未設定です。"
+            exit 1
+          fi
+
+      - name: Query RLS status for public schema tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          # public スキーマのユーザーテーブルのみを確認（Supabase内部テーブルは除外）
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F '|' -c \
+            "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" \
+            > rls_status.txt
+
+      - name: Build issue body
+        id: build_issue
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rows=""
+          while IFS='|' read -r table_name row_security; do
+            [[ -z "$table_name" ]] && continue
+            if [[ "$row_security" == "f" || "$row_security" == "false" ]]; then
+              rows="${rows}| ${table_name} | ❌ 無効 |\n"
+            fi
+          done < rls_status.txt
+
+          if [[ -z "$rows" ]]; then
+            echo "has_disabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          issue_body_file="issue_body.md"
+          {
+            echo '## RLS未設定テーブル一覧'
+            echo ''
+            echo '| テーブル名 | RLS状態 |'
+            echo '|-----------|---------|'
+            printf "%b" "$rows"
+            echo ''
+            echo '## 対応手順'
+            echo ''
+            echo '### 1. Supabase管理画面でRLSを有効化'
+            echo 'Authentication → Policies → 該当テーブル → Enable RLS'
+            echo ''
+            echo '### 2. ポリシーを追加'
+            echo 'Supabase SQL Editorで以下を実行:'
+            echo ''
+            echo '```sql'
+            echo '-- RLS有効化'
+            echo 'ALTER TABLE {tablename} ENABLE ROW LEVEL SECURITY;'
+            echo ''
+            echo '-- 基本ポリシー: ログインユーザーは自分のデータのみ操作可能'
+            echo 'CREATE POLICY "Users can view own data" ON {tablename}'
+            echo '  FOR SELECT USING (auth.uid() = user_id);'
+            echo ''
+            echo 'CREATE POLICY "Users can insert own data" ON {tablename}'
+            echo '  FOR INSERT WITH CHECK (auth.uid() = user_id);'
+            echo ''
+            echo 'CREATE POLICY "Users can update own data" ON {tablename}'
+            echo '  FOR UPDATE USING (auth.uid() = user_id);'
+            echo ''
+            echo 'CREATE POLICY "Users can delete own data" ON {tablename}'
+            echo '  FOR DELETE USING (auth.uid() = user_id);'
+            echo '```'
+            echo ''
+            echo '### 3. 確認テスト（SQL Editorで実行）'
+            echo ''
+            echo '```sql'
+            echo "-- テスト: 他人のデータが見えないか"
+            echo "set request.jwt.claims = '{\"sub\": \"テスト用UID\"}';"
+            echo 'select * from {tablename};'
+            echo '-- → 自分のデータのみ返ればOK'
+            echo '```'
+          } > "$issue_body_file"
+
+          echo "has_disabled=true" >> "$GITHUB_OUTPUT"
+          echo "issue_body_file=$issue_body_file" >> "$GITHUB_OUTPUT"
+
+      - name: Create issue when RLS is disabled
+        if: steps.build_issue.outputs.has_disabled == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PAT_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const bodyPath = '${{ steps.build_issue.outputs.issue_body_file }}';
+            const body = fs.readFileSync(bodyPath, 'utf8');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: process.env.ISSUE_TITLE,
+              labels: [process.env.ISSUE_LABEL],
+              body
+            });
