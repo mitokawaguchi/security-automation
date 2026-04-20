@@ -1,0 +1,160 @@
+name: Artillery load test
+
+on:
+  schedule:
+    # 毎週月曜 00:30 UTC（JST 09:30）
+    - cron: '30 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: '負荷テスト対象URL（未指定時は Repository Variables の ARTILLERY_TARGET_URL を使用）'
+        required: false
+        type: string
+      user_count:
+        description: '同時ユーザー数（未指定時は ARTILLERY_USER_COUNT。既定 50）'
+        required: false
+        type: string
+      request_rate:
+        description: 'ユーザーごとのリクエスト回数（未指定時は ARTILLERY_REQUEST_RATE。既定 10）'
+        required: false
+        type: string
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    env:
+      DEFAULT_TARGET_URL: ${{ vars.ARTILLERY_TARGET_URL }}
+      DEFAULT_USER_COUNT: ${{ vars.ARTILLERY_USER_COUNT }}
+      DEFAULT_REQUEST_RATE: ${{ vars.ARTILLERY_REQUEST_RATE }}
+      REPO_HOMEPAGE_URL: ${{ github.event.repository.homepage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve and validate settings
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 手動入力 > Repository Variables > Repository Homepage の順で採用
+          target_url="${{ inputs.target_url }}"
+          user_count="${{ inputs.user_count }}"
+          request_rate="${{ inputs.request_rate }}"
+
+          if [[ -z "${target_url}" ]]; then
+            target_url="${DEFAULT_TARGET_URL:-}"
+          fi
+          if [[ -z "${target_url}" ]]; then
+            target_url="${REPO_HOMEPAGE_URL:-}"
+          fi
+          if [[ -z "${user_count}" ]]; then
+            user_count="${DEFAULT_USER_COUNT:-50}"
+          fi
+          if [[ -z "${request_rate}" ]]; then
+            request_rate="${DEFAULT_REQUEST_RATE:-10}"
+          fi
+
+          if [[ ! "${target_url}" =~ ^https:// ]]; then
+            echo "::error::target_url が未設定、または https:// 形式ではありません。inputs.target_url / ARTILLERY_TARGET_URL / Repository Homepage(AboutのWebsite) のいずれかを設定してください。"
+            exit 1
+          fi
+
+          if [[ ! "${user_count}" =~ ^[0-9]+$ ]] || [[ "${user_count}" -lt 1 ]]; then
+            echo "::error::user_count は 1 以上の整数を指定してください。"
+            exit 1
+          fi
+
+          if [[ ! "${request_rate}" =~ ^[0-9]+$ ]] || [[ "${request_rate}" -lt 1 ]]; then
+            echo "::error::request_rate は 1 以上の整数を指定してください。"
+            exit 1
+          fi
+
+          echo "target_url=${target_url}" >> "$GITHUB_OUTPUT"
+          echo "user_count=${user_count}" >> "$GITHUB_OUTPUT"
+          echo "request_rate=${request_rate}" >> "$GITHUB_OUTPUT"
+
+      - name: Print test plan
+        shell: bash
+        run: |
+          echo "Target URL: ${{ steps.resolve.outputs.target_url }}"
+          echo "User count: ${{ steps.resolve.outputs.user_count }}"
+          echo "Request rate: ${{ steps.resolve.outputs.request_rate }}"
+
+      - name: Install Artillery
+        run: npm install -g artillery
+
+      - name: Run quick load test
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx artillery quick \
+            --count "${{ steps.resolve.outputs.user_count }}" \
+            --num "${{ steps.resolve.outputs.request_rate }}" \
+            "${{ steps.resolve.outputs.target_url }}" \
+            --output artillery-report.json \
+            | tee artillery-report.txt
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artillery-report
+          path: |
+            artillery-report.txt
+            artillery-report.json
+
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PAT_TOKEN }}
+          script: |
+            const issueTitle = '[Security] Artillery負荷テストが失敗しました';
+            const body = [
+              '## 負荷テストに失敗しました',
+              '',
+              `- Target URL: ${'${{ steps.resolve.outputs.target_url }}'}`,
+              `- User count: ${'${{ steps.resolve.outputs.user_count }}'}`,
+              `- Request rate: ${'${{ steps.resolve.outputs.request_rate }}'}`,
+              `- Run URL: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'Artifacts の `artillery-report` を確認して、タイムアウト・5xx・接続エラーを調査してください。'
+            ].join('\n');
+
+            const { data: existingIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            const duplicated = existingIssues.find((issue) => issue.title === issueTitle);
+            if (duplicated) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: duplicated.number,
+                body: [
+                  '同一タイトルのため新規Issueは作成せず、既存Issueに追記しました。',
+                  '',
+                  `- Run URL: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                  `- Target URL: ${'${{ steps.resolve.outputs.target_url }}'}`,
+                  `- User count: ${'${{ steps.resolve.outputs.user_count }}'}`,
+                  `- Request rate: ${'${{ steps.resolve.outputs.request_rate }}'}`
+                ].join('\n')
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: issueTitle,
+              labels: ['security-auto-fix'],
+              body
+            });
