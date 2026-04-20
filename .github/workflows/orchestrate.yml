@@ -1,0 +1,44 @@
+# 目的: 3層の結果を統合して重大リスクを判定し、必要時に CRITICAL エスカレーションします。
+# トリガー: 毎週月曜 00:30 UTC（JST 09:30）と手動実行です。
+# 依存: PAT_TOKEN, .github/scripts/orchestrator.sh, reports/ 配下の成果物です。
+# 想定実行時間: 3〜10分です。
+name: Orchestrate security brains
+
+on:
+  schedule:
+    - cron: '30 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run orchestrator
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/orchestrator.sh
+
+      - name: Commit orchestrator report
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- reports/orchestrator; then
+            echo "変更なし"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/orchestrator
+          git commit -m "docs: update orchestrator report"
+          git push

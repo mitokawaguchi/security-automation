@@ -1,0 +1,74 @@
+# 目的: 配布先リポジトリの最低限コンプライアンス項目を静的チェックします。
+# トリガー: push / pull_request / 週次スケジュール / 手動実行です。
+# 依存: bash, GitHub API（GITHUB_TOKEN）です。
+# 想定実行時間: 1〜5分です。
+name: Compliance checker
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  schedule:
+    - cron: '35 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required files
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+
+          if [[ ! -f ".env.example" ]]; then
+            echo "::error::.env.example がありません。"
+            missing=1
+          fi
+          if [[ ! -f "LICENSE" ]]; then
+            echo "::error::LICENSE がありません。"
+            missing=1
+          fi
+          if [[ ! -f ".github/dependabot.yml" ]]; then
+            echo "::error::.github/dependabot.yml がありません。"
+            missing=1
+          fi
+
+          if [[ "${missing}" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Check branch protection (best effort)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${REPO%/*}"
+          repo="${REPO#*/}"
+          default_branch="$(gh api "/repos/${owner}/${repo}" --jq .default_branch)"
+          protection_url="/repos/${owner}/${repo}/branches/${default_branch}/protection"
+          set +e
+          gh api "${protection_url}" >/tmp/protection.json 2>/tmp/protection.err
+          rc=$?
+          set -e
+          if [[ "${rc}" -ne 0 ]]; then
+            echo "::warning::ブランチ保護情報を取得できませんでした。プランまたは権限により未取得の可能性があります。"
+            exit 0
+          fi
+          required_reviews="$(jq -r '.required_pull_request_reviews != null' /tmp/protection.json)"
+          required_status_checks="$(jq -r '.required_status_checks != null' /tmp/protection.json)"
+          if [[ "${required_reviews}" != "true" || "${required_status_checks}" != "true" ]]; then
+            echo "::warning::ブランチ保護が十分ではない可能性があります（PR review / status checks）。"
+          fi

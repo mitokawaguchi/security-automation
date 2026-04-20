@@ -1,0 +1,29 @@
+# 目的: 各リポジトリのセキュリティ Issue に優先度ラベル（P0〜P3）を付与します。
+# トリガー: 毎週月曜 00:10 UTC と手動実行です。
+# 依存: PAT_TOKEN, .github/scripts/risk-scorer.sh です。
+# 想定実行時間: 3〜12分です。
+name: Risk score issues
+
+on:
+  schedule:
+    - cron: '10 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Score issues
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/risk-scorer.sh

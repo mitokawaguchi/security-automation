@@ -1,0 +1,57 @@
+# 目的: 配布先リポジトリで SBOM を生成し、Grype で CVE を評価します。
+# トリガー: push / pull_request / 週次スケジュール / 手動実行です。
+# 依存: anchore/sbom-action, anchore/scan-action, actions/upload-artifact です。
+# 想定実行時間: 4〜12分です。
+name: SBOM generate and scan
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  schedule:
+    - cron: '25 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  sbom-and-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0.18.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+
+      - name: Scan SBOM with Grype
+        id: grype_scan
+        uses: anchore/scan-action@v6
+        with:
+          sbom: sbom.cdx.json
+          fail-build: false
+          severity-cutoff: high
+
+      - name: Upload SBOM and Grype report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-and-grype
+          path: |
+            sbom.cdx.json
+            ${{ steps.grype_scan.outputs.sarif }}
+
+      - name: Upload Grype SARIF
+        if: steps.grype_scan.outputs.sarif != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.grype_scan.outputs.sarif }}
