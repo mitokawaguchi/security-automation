@@ -17,6 +17,9 @@
 
 ## 2. 3つの脳アーキテクチャ
 
+詳細版は `docs/ARCHITECTURE.md` を参照してください。  
+統合テスト手順は `docs/TESTING.md` にあります。
+
 ```mermaid
 flowchart LR
   A[Distribute workflows] --> B[配布先の各リポ]
