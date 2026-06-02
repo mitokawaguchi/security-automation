@@ -27,28 +27,44 @@ jobs:
 
       - name: Validate required secrets
         shell: bash
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
-            echo "::error::secrets.SUPABASE_DB_URL が未設定です。"
-            exit 1
-          fi
-          if [[ -z "${{ secrets.PAT_TOKEN }}" ]]; then
-            echo "::error::secrets.PAT_TOKEN が未設定です。"
+          # 未設定のSecretsをまとめて報告する（どれが欠けているか一度で分かるように）
+          missing=()
+          [[ -z "${SUPABASE_DB_URL:-}" ]] && missing+=("SUPABASE_DB_URL")
+          [[ -z "${PAT_TOKEN:-}" ]] && missing+=("PAT_TOKEN")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::必要なSecretsが未設定です: ${missing[*]}（Settings → Secrets and variables → Actions で登録してください）"
             exit 1
           fi
 
       - name: Query RLS status for public schema tables
+        id: query_rls
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # public スキーマのユーザーテーブルのみを確認（Supabase内部テーブルは除外）
+          # 接続失敗（プロジェクト一時停止・到達不可など）はワークフロー失敗にせず、
+          # 警告を出して正常終了する（free planは無操作で自動pauseするため）
+          set +e
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F '|' -c \
             "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" \
-            > rls_status.txt
+            > rls_status.txt 2> psql_err.txt
+          status=$?
+          set -e
+          if [[ $status -ne 0 ]]; then
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            err_msg="$(tr '\n' ' ' < psql_err.txt)"
+            echo "::warning::Supabase DBへ接続できませんでした。プロジェクトが一時停止中の可能性があります（Supabaseダッシュボードでrestoreしてください）。RLSチェックは今回スキップします。psql詳細: ${err_msg}"
+            exit 0
+          fi
+          echo "reachable=true" >> "$GITHUB_OUTPUT"
 
       - name: Build issue body
         id: build_issue
+        if: steps.query_rls.outputs.reachable == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -114,7 +130,7 @@ jobs:
           echo "issue_body_file=$issue_body_file" >> "$GITHUB_OUTPUT"
 
       - name: Create issue when RLS is disabled
-        if: steps.build_issue.outputs.has_disabled == 'true'
+        if: steps.query_rls.outputs.reachable == 'true' && steps.build_issue.outputs.has_disabled == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.PAT_TOKEN }}
