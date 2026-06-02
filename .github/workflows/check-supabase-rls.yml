@@ -44,10 +44,11 @@ jobs:
         id: query_rls
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           # public スキーマのユーザーテーブルのみを確認（Supabase内部テーブルは除外）
-          # 接続失敗（プロジェクト一時停止・到達不可など）はワークフロー失敗にせず、
-          # 警告を出して正常終了する（free planは無操作で自動pauseするため）
+          # 接続不可（プロジェクト一時停止・到達不可など）はワークフロー失敗にせず警告で
+          # 正常終了する（free planは無操作で自動pauseするため）。
+          # ただし認証/設定/SQLエラー等は見逃さないよう従来どおり失敗させる。
           set +e
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F '|' -c \
             "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" \
@@ -55,10 +56,19 @@ jobs:
           status=$?
           set -e
           if [[ $status -ne 0 ]]; then
-            echo "reachable=false" >> "$GITHUB_OUTPUT"
-            err_msg="$(tr '\n' ' ' < psql_err.txt)"
-            echo "::warning::Supabase DBへ接続できませんでした。プロジェクトが一時停止中の可能性があります（Supabaseダッシュボードでrestoreしてください）。RLSチェックは今回スキップします。psql詳細: ${err_msg}"
-            exit 0
+            # psqlのexit status 2 は接続不良、status 3 は ON_ERROR_STOP 時のSQL/スクリプトエラー。
+            # 「一時停止・到達不可」は接続レベル(=status 2)かつpoolerのシグネチャに合致する場合のみ
+            # スキップ扱いとし、それ以外（認証ミス・権限/カタログ/SQLエラー等）は fail-fast させる。
+            if [[ $status -eq 2 ]] && grep -qiE 'tenant or user not found|tenant/user .* not found|could not translate host name|name or service not known|temporary failure in name resolution|could not connect to server|connection refused|connection timed out|timeout expired|server closed the connection|no route to host' psql_err.txt; then
+              echo "reachable=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::Supabase DBへ接続できませんでした。プロジェクトが一時停止中の可能性があります（Supabaseダッシュボードでrestoreしてください）。RLSチェックは今回スキップします。"
+              echo "--- psql error ---"
+              cat psql_err.txt
+              exit 0
+            fi
+            echo "::error::Supabase DBへの問い合わせに失敗しました（認証/設定エラーの可能性。一時停止ではありません）。"
+            cat psql_err.txt
+            exit "$status"
           fi
           echo "reachable=true" >> "$GITHUB_OUTPUT"
 
