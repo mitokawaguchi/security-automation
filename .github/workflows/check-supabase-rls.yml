@@ -27,28 +27,54 @@ jobs:
 
       - name: Validate required secrets
         shell: bash
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
-            echo "::error::secrets.SUPABASE_DB_URL が未設定です。"
-            exit 1
-          fi
-          if [[ -z "${{ secrets.PAT_TOKEN }}" ]]; then
-            echo "::error::secrets.PAT_TOKEN が未設定です。"
+          # 未設定のSecretsをまとめて報告する（どれが欠けているか一度で分かるように）
+          missing=()
+          [[ -z "${SUPABASE_DB_URL:-}" ]] && missing+=("SUPABASE_DB_URL")
+          [[ -z "${PAT_TOKEN:-}" ]] && missing+=("PAT_TOKEN")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::必要なSecretsが未設定です: ${missing[*]}（Settings → Secrets and variables → Actions で登録してください）"
             exit 1
           fi
 
       - name: Query RLS status for public schema tables
+        id: query_rls
         shell: bash
         run: |
           set -euo pipefail
           # public スキーマのユーザーテーブルのみを確認（Supabase内部テーブルは除外）
+          # 接続不可（プロジェクト一時停止・到達不可など）はワークフロー失敗にせず警告で
+          # 正常終了する（free planは無操作で自動pauseするため）。
+          # ただし認証/設定/SQLエラー等は見逃さないよう従来どおり失敗させる。
+          set +e
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F '|' -c \
             "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" \
-            > rls_status.txt
+            > rls_status.txt 2> psql_err.txt
+          status=$?
+          set -e
+          if [[ $status -ne 0 ]]; then
+            # psqlのexit status 2 は接続不良、status 3 は ON_ERROR_STOP 時のSQL/スクリプトエラー。
+            # 「一時停止・到達不可」は接続レベル(=status 2)かつpoolerのシグネチャに合致する場合のみ
+            # スキップ扱いとし、それ以外（認証ミス・権限/カタログ/SQLエラー等）は fail-fast させる。
+            if [[ $status -eq 2 ]] && grep -qiE 'tenant or user not found|tenant/user .* not found|could not translate host name|name or service not known|temporary failure in name resolution|could not connect to server|connection refused|connection timed out|timeout expired|server closed the connection|no route to host' psql_err.txt; then
+              echo "reachable=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::Supabase DBへ接続できませんでした。プロジェクトが一時停止中の可能性があります（Supabaseダッシュボードでrestoreしてください）。RLSチェックは今回スキップします。"
+              echo "--- psql error ---"
+              cat psql_err.txt
+              exit 0
+            fi
+            echo "::error::Supabase DBへの問い合わせに失敗しました（認証/設定エラーの可能性。一時停止ではありません）。"
+            cat psql_err.txt
+            exit "$status"
+          fi
+          echo "reachable=true" >> "$GITHUB_OUTPUT"
 
       - name: Build issue body
         id: build_issue
+        if: steps.query_rls.outputs.reachable == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -114,7 +140,7 @@ jobs:
           echo "issue_body_file=$issue_body_file" >> "$GITHUB_OUTPUT"
 
       - name: Create issue when RLS is disabled
-        if: steps.build_issue.outputs.has_disabled == 'true'
+        if: steps.query_rls.outputs.reachable == 'true' && steps.build_issue.outputs.has_disabled == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.PAT_TOKEN }}
