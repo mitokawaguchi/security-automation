@@ -20,17 +20,47 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # --- 認証トークンの解決（GitHub App 優先・PAT_TOKEN フォールバック） ---
+      # APP_ID / APP_PRIVATE_KEY が設定されていれば、owner 配下の全リポに対する
+      # 短命（既定1時間）の App インストールトークンを発行します。
+      # 未設定なら従来どおり PAT_TOKEN を使用するため、完全に後方互換です。
+      - name: Detect GitHub App credentials
+        id: auth
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${APP_ID:-}" ]]; then
+            echo "use_app=true" >> "$GITHUB_OUTPUT"
+            echo "GitHub App 認証を使用します（短命トークン）。"
+          else
+            echo "use_app=false" >> "$GITHUB_OUTPUT"
+            echo "APP_ID 未設定のため、従来の PAT_TOKEN にフォールバックします。"
+          fi
+
+      - name: Mint GitHub App installation token
+        id: app_token
+        if: steps.auth.outputs.use_app == 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # repositories を指定しない場合、owner 配下でインストール済みの全リポ向けトークンになります
+          owner: ${{ github.repository_owner }}
 
       - name: Secret scanning 有効化のうえ全リポジトリへワークフローを配布
         env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          # App トークンがあれば優先し、無ければ PAT_TOKEN を使用
+          GH_TOKEN: ${{ steps.app_token.outputs.token || secrets.PAT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
 
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::secrets.PAT_TOKEN が未設定です。リポジトリの Secrets に PAT_TOKEN を登録してください。"
+            echo "::error::認証トークンがありません。GitHub App（APP_ID / APP_PRIVATE_KEY）または PAT_TOKEN のいずれかを Secrets に設定してください。"
             exit 1
           fi
 

@@ -1,0 +1,116 @@
+# 目的: TS/JS リポジトリの PR で型チェック（tsc --noEmit）と eslint を実行し、型/Lint エラーをブロックします。
+# トリガー: pull_request / 手動実行です。
+# 依存: actions/setup-node, 各リポのパッケージマネージャ（npm/pnpm/yarn/bun を自動判定）です。
+# 想定実行時間: 2〜8分です。package.json が無いリポでは自動的にスキップします。
+name: TS type + lint gate (PR gate)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  type-lint:
+    name: Type check & lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Detect stack & package manager
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          has_pkg="false"; has_tsconfig="false"; has_eslint="false"; pm="npm"
+
+          [[ -f package.json ]] && has_pkg="true"
+          [[ -f tsconfig.json ]] && has_tsconfig="true"
+
+          # eslint 設定の有無（旧形式 / flat config / package.json の eslintConfig）
+          if ls .eslintrc .eslintrc.* eslint.config.* >/dev/null 2>&1; then
+            has_eslint="true"
+          elif [[ -f package.json ]] && grep -Eq '"eslintConfig"[[:space:]]*:' package.json; then
+            has_eslint="true"
+          fi
+
+          # パッケージマネージャ判定（lockfile 優先）
+          if [[ -f pnpm-lock.yaml ]]; then pm="pnpm"
+          elif [[ -f yarn.lock ]]; then pm="yarn"
+          elif [[ -f bun.lockb || -f bun.lock ]]; then pm="bun"
+          elif [[ -f package-lock.json ]]; then pm="npm"
+          fi
+
+          {
+            echo "has_pkg=${has_pkg}"
+            echo "has_tsconfig=${has_tsconfig}"
+            echo "has_eslint=${has_eslint}"
+            echo "pm=${pm}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "${has_pkg}" != "true" ]]; then
+            echo "::notice::package.json が無いため、型/Lint ゲートをスキップします。"
+          else
+            echo "検出: pm=${pm} / tsconfig=${has_tsconfig} / eslint=${has_eslint}"
+          fi
+
+      - name: Setup Node.js
+        if: steps.detect.outputs.has_pkg == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        if: steps.detect.outputs.has_pkg == 'true'
+        env:
+          PM: ${{ steps.detect.outputs.pm }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # corepack で pnpm/yarn を有効化（同梱されていない環境向け）
+          corepack enable || true
+          case "${PM}" in
+            pnpm) pnpm install --frozen-lockfile || pnpm install ;;
+            yarn) yarn install --frozen-lockfile || yarn install ;;
+            bun)  npm install -g bun >/dev/null 2>&1 || true; bun install ;;
+            *)    if [[ -f package-lock.json ]]; then npm ci || npm install; else npm install; fi ;;
+          esac
+
+      - name: Type check (tsc --noEmit)
+        if: steps.detect.outputs.has_pkg == 'true' && steps.detect.outputs.has_tsconfig == 'true'
+        env:
+          PM: ${{ steps.detect.outputs.pm }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_bin() { case "${PM}" in
+            pnpm) pnpm exec "$@";; yarn) yarn exec "$@";; bun) bunx "$@";; *) npx --no-install "$@";;
+          esac; }
+          # typescript が未導入なら（型ゲート対象外として）graceful にスキップ
+          if ! run_bin tsc --version >/dev/null 2>&1; then
+            echo "::notice::typescript が未導入のため型チェックをスキップします。"
+            exit 0
+          fi
+          echo "tsc --noEmit を実行します..."
+          run_bin tsc --noEmit
+
+      - name: Lint (eslint)
+        if: steps.detect.outputs.has_pkg == 'true' && steps.detect.outputs.has_eslint == 'true'
+        env:
+          PM: ${{ steps.detect.outputs.pm }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_bin() { case "${PM}" in
+            pnpm) pnpm exec "$@";; yarn) yarn exec "$@";; bun) bunx "$@";; *) npx --no-install "$@";;
+          esac; }
+          # eslint が未導入なら（Lint ゲート対象外として）graceful にスキップ
+          if ! run_bin eslint --version >/dev/null 2>&1; then
+            echo "::notice::eslint が未導入のため Lint をスキップします。"
+            exit 0
+          fi
+          echo "eslint を実行します..."
+          run_bin eslint .

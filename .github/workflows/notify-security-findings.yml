@@ -18,7 +18,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout（スクリプト取得）
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Code Scanning の結果を Issue 化
         env:

@@ -1,0 +1,19 @@
+# 目的: SHA 固定した GitHub Actions を Dependabot が週次で追従更新し、更新 PR を自動作成します。
+# トリガー: Dependabot のスケジューラ（毎週月曜）です。
+# 依存: .github/workflows 配下のワークフロー（github-actions エコシステム）です。
+# 想定実行時間: PR 自動作成（即時）です。
+# 補足: github-actions エコシステムは .github/workflows のみを走査します。
+#       配布テンプレート（workflows/ 配下）の固定 SHA は、配布先リポの Dependabot 側で追従されます。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"
