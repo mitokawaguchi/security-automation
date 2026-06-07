@@ -13,6 +13,14 @@
 flowchart TD
   A[配布エンジン<br/>distribute-workflows.yml] --> B[各リポに監査ワークフロー配布]
 
+  B --> P[PRゲート層 shift-left]
+  P --> P1[Dependency review]
+  P --> P2[Next.js secret guard]
+  P --> P3[TS type + lint gate]
+  P1 --> PR{マージ可否を判定}
+  P2 --> PR
+  P3 --> PR
+
   B --> C1[攻撃研究者の脳]
   B --> C2[CISOの脳]
   B --> C3[投資家の脳]
@@ -40,6 +48,12 @@ flowchart TD
 ```
 
 ## レイヤー別責務
+
+- PRゲート層（shift-left）  
+  マージ前に「既知脆弱依存の混入」「クライアントへの機密露出（Next.js）」「型/Lint エラー」をブロックし、危険な変更が main に入るのを未然に防ぎます。検知・起票中心の事後型に対し、唯一の**予防的（preventive）**レイヤーです。配布テンプレートは各リポのスタックを自己判定し、無関係なら no-op します。
+
+- サプライチェーン硬化（横断）  
+  全アクションを commit SHA に固定し、`dependabot.yml`（自動追従）、`zizmor`（ワークフロー静的監査）、`OpenSSF Scorecard`（健全性評価）で改ざん耐性と最小権限を継続検証します。`PAT_TOKEN` は GitHub App の短命トークンへ移行予定です（`GITHUB_APP_MIGRATION.md`）。
 
 - 攻撃研究者レイヤー  
   脆弱性・秘密情報漏えい・SBOM/CVEを収集し、技術的な危険シグナルを出します。

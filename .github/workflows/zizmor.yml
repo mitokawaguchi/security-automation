@@ -1,0 +1,47 @@
+# 目的: このリポジトリの全ワークフローを zizmor で静的監査し（injection/過剰権限/未固定アクション等）、SARIF を Security タブへ連携します。
+# トリガー: ワークフロー変更を含む push / pull_request、週次でない手動実行です。
+# 依存: zizmor（pipx 経由 CLI）, github/codeql-action/upload-sarif です。
+# 想定実行時間: 1〜3分です。
+name: Zizmor workflow audit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/**'
+      - 'workflows/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  zizmor:
+    name: Zizmor audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Run zizmor (SARIF 出力)
+        # 初期導入のため非ブロッキング。検出結果は Security タブで確認する運用とします。
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 中央リポの両ワークフロー群（配布元 .github/workflows と配布テンプレート workflows）を監査
+          pipx run zizmor --format sarif .github/workflows workflows > zizmor.sarif || true
+          test -s zizmor.sarif || echo '{"version":"2.1.0","runs":[]}' > zizmor.sarif
+
+      - name: Upload SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor

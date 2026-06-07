@@ -24,10 +24,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0.18.0
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
         with:
           path: .
           format: cyclonedx-json
@@ -35,7 +35,7 @@ jobs:
 
       - name: Scan SBOM with Grype
         id: grype_scan
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6.5.1
         with:
           sbom: sbom.cdx.json
           fail-build: false
@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload SBOM and Grype report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom-and-grype
           path: |
@@ -52,6 +52,6 @@ jobs:
 
       - name: Upload Grype SARIF
         if: steps.grype_scan.outputs.sarif != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
         with:
           sarif_file: ${{ steps.grype_scan.outputs.sarif }}

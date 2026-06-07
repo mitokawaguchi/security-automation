@@ -1,0 +1,43 @@
+# 目的: OpenSSF Scorecard でこのリポジトリのサプライチェーン健全性を評価し、SARIF を Security タブへ連携します。
+# トリガー: 毎週月曜 01:00 UTC（JST 10:00／既存 00:00-00:40 枠と非衝突）と手動実行です。
+# 依存: ossf/scorecard-action, github/codeql-action/upload-sarif です。
+# 想定実行時間: 2〜5分です。
+name: OpenSSF Scorecard
+
+on:
+  schedule:
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      security-events: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard analysis
+        # 非ブロッキング運用。スコアは Security タブの SARIF で確認します。
+        continue-on-error: true
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          # publish_results はパブリックリポでバッジ公開する場合のみ true に変更してください。
+          publish_results: false
+
+      - name: Upload SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          sarif_file: scorecard.sarif
+          category: scorecard

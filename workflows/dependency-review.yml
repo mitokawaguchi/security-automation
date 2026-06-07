@@ -1,0 +1,60 @@
+# 目的: 配布先リポジトリの PR で、既知脆弱性を持つ依存の新規混入をブロックします（shift-left ゲート）。
+# トリガー: pull_request / 手動実行です。
+# 依存: actions/dependency-review-action, GitHub Dependency Graph（GITHUB_TOKEN）です。
+# 想定実行時間: 1〜3分です。
+name: Dependency review (PR gate)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Probe Dependency Graph availability
+        id: probe
+        # Dependency Graph が無効/非対応のリポ（無料プラン privateなど）では本機能が使えない。
+        # その場合はジョブを失敗させず、ゲートをスキップする（無関係リポを落とさない方針）。
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${BASE_SHA:-}" || -z "${HEAD_SHA:-}" ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR コンテキストの base/head が取得できないため Dependency review をスキップします。"
+            exit 0
+          fi
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}" 2>/dev/null || echo "000")"
+          if [[ "${code}" == "200" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Dependency Graph 利用可能（HTTP ${code}）。ゲートを実行します。"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Dependency Graph が利用できません（HTTP ${code}）。このリポでは Dependency review をスキップします。"
+          fi
+
+      - name: Dependency review (block on High/Critical)
+        if: steps.probe.outputs.available == 'true'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          # High 以上の既知脆弱性を持つ依存の新規追加で PR を失敗させる
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
