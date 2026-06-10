@@ -46,7 +46,7 @@
 ## 6. Phase 5 テスト（PRゲート / サプライチェーン）
 
 1. 配布先リポでテスト PR を作成し、`Dependency review (PR gate)` が実行されることを確認します。  
-   - 既知脆弱依存（例: 古い `lodash`）を追加した PR が **High 以上で失敗**することを確認します。  
+   - 既知脆弱依存（例: 古い `lodash`）を追加した PR が **Moderate（中程度）以上で失敗**することを確認します。  
    - Dependency Graph 無効リポでは `::notice::` を出して**スキップ（成功）**することを確認します。
 2. Next.js リポで `NEXT_PUBLIC_*_SECRET` への代入や、`'use client'` での機密 env 参照を含む PR が `Next.js client-secret guard` で**失敗**することを確認します。非 Next.js リポでは**スキップ**されることを確認します。  
    - ログに**秘密情報の値が出力されない**ことも確認します（キー名・ファイル:行のみ）。

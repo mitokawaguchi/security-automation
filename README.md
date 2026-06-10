@@ -123,7 +123,7 @@ security-automation/
 
 | Workflow | トリガー | 役割 |
 |---|---|---|
-| Dependency review (PR gate) | `pull_request` | 既知脆弱依存の新規混入をブロック（配布） |
+| Dependency review (PR gate) | `pull_request` | 既知脆弱依存の新規混入をブロック（配布・中程度以上） |
 | Next.js client-secret guard (PR gate) | `pull_request` | クライアントへの機密露出をブロック（配布・Next.jsのみ） |
 | TS type + lint gate (PR gate) | `pull_request` | `tsc --noEmit` + eslint（配布・TS/JSのみ） |
 | Zizmor workflow audit | `push` / `pull_request`（ワークフロー変更時） | ワークフロー静的監査（中央） |
