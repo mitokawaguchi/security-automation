@@ -54,7 +54,7 @@
 4. このリポで `Zizmor workflow audit` を手動実行し、SARIF が Security タブに表示されることを確認します。
 5. すべてのワークフローで `uses:` が **commit SHA に固定**（`# vX.Y.Z` コメント付き）されていることを確認します（`grep -rEn 'uses:.*@v[0-9]'` が 0 件）。
 6. `.github/dependabot.yml` 追加後、`github-actions` の更新 PR が作成されること、`Auto merge Dependabot patch PRs` がパッチ更新を自動マージすることを確認します。
-7. （任意）`OpenSSF Scorecard` を手動実行し SARIF が出ること、`ZAP baseline scan` が URL 解決（inputs / `ZAP_TARGET_URL` / Homepage）で動作することを確認します。
+7. （任意）`OpenSSF Scorecard` を手動実行し SARIF が出ること、`ZAP baseline scan` が URL 解決（inputs / `ZAP_TARGET_URL` / Homepage）で動作することを確認します。定期実行（月 02:00 UTC）では Homepage を取得できないため、`ZAP_TARGET_URL` を設定したリポのみ実行され、未設定リポは `::notice::` を出して**スキップ（成功）**することを確認します。
 8. （App移行時）`APP_ID` / `APP_PRIVATE_KEY` 設定後、`Distribute workflows` のログに「GitHub App 認証を使用します（短命トークン）。」が出ることを確認します。未設定時は `PAT_TOKEN` フォールバックで従来どおり動くことを確認します。
 
 ## 7. 回帰テスト
