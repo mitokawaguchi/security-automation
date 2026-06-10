@@ -51,10 +51,10 @@ jobs:
             echo "::notice::Dependency Graph が利用できません（HTTP ${code}）。このリポでは Dependency review をスキップします。"
           fi
 
-      - name: Dependency review (block on High/Critical)
+      - name: Dependency review (block on Moderate+)
         if: steps.probe.outputs.available == 'true'
         uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
-          # High 以上の既知脆弱性を持つ依存の新規追加で PR を失敗させる
-          fail-on-severity: high
+          # Moderate（中程度）以上の既知脆弱性を持つ依存の新規追加で PR を失敗させる
+          fail-on-severity: moderate
           comment-summary-in-pr: on-failure

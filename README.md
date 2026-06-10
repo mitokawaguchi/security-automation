@@ -81,7 +81,7 @@ security-automation/
 │   ├── secret-scan.yml
 │   ├── trivy.yml
 │   ├── ts-type-lint-gate.yml   # PRゲート: tsc --noEmit + eslint（TS/JSのみ）
-│   └── zap-baseline.yml        # OWASP ZAP baseline（任意・手動・非ブロッキング）
+│   └── zap-baseline.yml        # OWASP ZAP baseline（任意・週次＋手動・非ブロッキング）
 ├── DASHBOARD.md
 └── README.md
 ```
@@ -119,15 +119,15 @@ security-automation/
 
 > 既存の月曜 00:00–00:40 UTC 枠とは衝突しないよう、Scorecard は 01:00 UTC に配置しています。
 
-### イベント駆動（cron なし）のワークフロー
+### イベント駆動・手動／配布側スケジュールのワークフロー
 
 | Workflow | トリガー | 役割 |
 |---|---|---|
-| Dependency review (PR gate) | `pull_request` | 既知脆弱依存の新規混入をブロック（配布） |
+| Dependency review (PR gate) | `pull_request` | 既知脆弱依存の新規混入をブロック（配布・中程度以上） |
 | Next.js client-secret guard (PR gate) | `pull_request` | クライアントへの機密露出をブロック（配布・Next.jsのみ） |
 | TS type + lint gate (PR gate) | `pull_request` | `tsc --noEmit` + eslint（配布・TS/JSのみ） |
 | Zizmor workflow audit | `push` / `pull_request`（ワークフロー変更時） | ワークフロー静的監査（中央） |
-| ZAP baseline scan | `workflow_dispatch` | プレビューURLへの受動スキャン（配布・手動・非ブロッキング） |
+| ZAP baseline scan | `schedule`（月 02:00 UTC）/ `workflow_dispatch` | プレビュー/公開URLへの受動スキャン（配布・非ブロッキング・URL未設定はスキップ） |
 
 ## 6. 役割対応表
 
